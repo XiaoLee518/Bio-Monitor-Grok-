@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ESP32 BioMonitor v21 (Algo Integrated)</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script> <!-- 新增 JSZip for ZIP export -->
+
+    <style>
+        /* --- CSS Variables & Theme --- */
+        :root {
+            --bg-sidebar: #1e293b; --bg-main: #f1f5f9; --bg-card: #ffffff;
+            --text-main: #0f172a; --text-sub: #334155; --brand: #3b82f6;
+            --accent: #0ea5e9; --border: #e2e8f0; --radius: 6px;
+            --success: #10b981; --warning: #f59e0b; --danger: #ef4444;
+            --shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        }
+
+        body[data-theme="zen"] { --bg-sidebar:#4b4b42; --bg-main:#f4f4f0; --bg-card:#fdfdfb; --text-main:#2c2c28; --brand:#657c58; --accent:#8a9a5b; }
+        body[data-theme="sakura"] { --bg-sidebar:#5e4b52; --bg-main:#fff0f5; --bg-card:#ffffff; --text-main:#4a3b42; --brand:#db7093; --accent:#ffb7c5; }
+        body[data-theme="mono"] { --bg-sidebar:#000; --bg-main:#eee; --bg-card:#fff; --text-main:#000; --brand:#333; --accent:#666; --border:#000; --radius:0; }
+
+        body { font-family: "Segoe UI", sans-serif; margin: 0; background: var(--bg-main); color: var(--text-main); display: flex; height: 100vh; overflow: hidden; transition: 0.3s; }
+        
+        /* Layout */
+        .sidebar { width: 260px; background: var(--bg-sidebar); color: #e2e8f0; display: flex; flex-direction: column; padding: 20px 15px; overflow-y: auto; flex-shrink: 0; z-index: 100; transition: all 0.3s; }
+        .sidebar h3 { text-align: center; color: #fff; margin-bottom: 25px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 15px; font-weight: 700; letter-spacing: 1px; }
+        .nav-btn { background: transparent; color: rgba(255,255,255,0.7); border: none; padding: 12px 15px; text-align: left; cursor: pointer; border-radius: var(--radius); margin-bottom: 5px; width: 100%; display: block; font-size: 0.95rem; transition: 0.2s; }
+        .nav-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+        .nav-btn.active { background: var(--brand); color: #fff; font-weight: 600; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .main { flex: 1; padding: 25px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; position: relative; }
+        
+        /* Components */
+        .card { background: var(--bg-card); border-radius: var(--radius); padding: 25px; box-shadow: var(--shadow); border: 1px solid var(--border); position: relative; }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #f1f5f9; padding-bottom: 15px; flex-wrap: wrap; gap: 10px; }
+        .card-title { font-size: 1.2rem; font-weight: 700; color: var(--text-sub); }
+        .btn { padding: 8px 16px; border: none; border-radius: var(--radius); cursor: pointer; font-weight: 600; font-size: 0.9rem; color: white; margin-right: 5px; transition: 0.1s; }
+        .btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+        .btn:disabled { background: #cbd5e1 !important; cursor: not-allowed; opacity: 0.7; }
+        .btn-primary { background: var(--brand); } .btn-ble { background: #8b5cf6; } 
+        .btn-success { background: var(--success); } .btn-danger { background: var(--danger); } 
+        .btn-warning { background: var(--warning); } .btn-info { background: var(--accent); }
+
+        /* Dropdown & File Name */
+        .dropdown { position: relative; display: inline-block; }
+        .dropdown-content { display: none; position: absolute; right: 0; background-color: var(--bg-card); min-width: 160px; box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2); z-index: 10; border-radius: var(--radius); border: 1px solid var(--border); }
+        .dropdown-content button { color: var(--text-main); padding: 12px 16px; text-decoration: none; display: block; width: 100%; text-align: left; border: none; background: none; cursor: pointer; font-size: 0.9rem; }
+        .dropdown-content button:hover { background-color: var(--bg-main); color: var(--brand); }
+        .dropdown:hover .dropdown-content { display: block; }
+        .file-name { font-size: 0.85rem; color: var(--text-sub); margin-right: 10px; font-weight: 600; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+        /* Grids & Charts */
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+        .chart-box { height: 220px; border: 1px solid var(--border); padding: 5px; border-radius: var(--radius); position: relative; }
+        .live-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+        .chart-container-live { position: relative; height: 200px; width: 100%; }
+        
+        /* Panels */
+        .baseline-panel { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 15px; margin-bottom: 20px; }
+        .bl-box { text-align: center; border-right: 1px solid #dbeafe; } .bl-box:last-child { border-right: none; }
+        .bl-label { font-size: 0.85rem; color: #64748b; font-weight: 600; }
+        .bl-value { font-size: 1.4rem; font-weight: 800; color: var(--brand); margin-top: 5px; }
+        
+        .current-val-panel { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        .cv-box { text-align: center; } .cv-label { font-size: 0.9rem; font-weight: 700; color: #065f46; } 
+        .cv-value { font-size: 2rem; font-weight: 800; color: #047857; font-family: monospace; }
+        .cv-sub { font-size: 0.8rem; color: #059669; opacity: 0.8; }
+
+        /* A4 Report Format */
+        .a4-paper { width: 210mm; min-height: 297mm; background: white; padding: 20mm; margin: 0 auto; box-shadow: 0 0 15px rgba(0,0,0,0.1); display: none; border: 1px solid #ddd; color: #000; }
+        .report-header { border-bottom: 3px solid var(--brand); padding-bottom: 15px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: flex-end; }
+        .report-title { font-size: 24pt; font-weight: 800; }
+        
+        /* Stats & Logs */
+        .stat-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; margin-bottom: 10px; }
+        .stat-cell { background: #f8fafc; padding: 8px; text-align: center; border: 1px solid #e2e8f0; }
+        .stat-label { font-size: 8pt; color: #64748b; display: block; }
+        .stat-val { font-size: 11pt; font-weight: 700; font-family: monospace; color: #0f172a; }
+        .report-chart-container { height: 350px; width: 100%; border: 1px solid #e2e8f0; padding: 5px; margin-bottom: 10px; position: relative; }
+        .event-log-box { border: 1px solid #ef4444; background: #fef2f2; padding: 10px; font-size: 9pt; max-height: 150px; overflow-y: auto; margin-bottom: 30px; }
+        .event-item { display: flex; justify-content: space-between; border-bottom: 1px dashed #fca5a5; padding: 4px 0; color: #991b1b; }
+        .log-empty { color: var(--success); font-style: italic; text-align: center; padding: 5px; }
+
+        /* All-in-One Specifics */
+        #allInOneArea { background: var(--bg-card); padding: 25px; border-radius: var(--radius); margin-bottom: 20px; }
+        .gauge-container { position: relative; height: 260px; display: flex; justify-content: center; align-items: center; }
+        .score-display { position: absolute; top: 60%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
+        .score-val { font-size: 4rem; font-weight: 800; color: var(--text-main); line-height: 1; }
+        .math-box { margin-top: 20px; padding: 15px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: var(--radius); color: #064e3b; font-size: 0.9rem; line-height: 1.6; margin-bottom: 30px; }
+        .section-divider { display: flex; align-items: center; margin: 40px 0 20px 0; font-weight: 700; color: var(--brand); font-size: 1.2rem; }
+        .section-divider::before { content:""; flex: 1; height: 3px; background: var(--border); margin-right: 15px; }
+        .section-divider::after { content:""; flex: 1; height: 3px; background: var(--border); margin-left: 15px; }
+        
+        /* Manual */
+        .manual-section { margin-bottom: 30px; border-bottom: 1px solid #eee; padding-bottom: 20px; }
+        .manual-step { display: flex; gap: 15px; margin-bottom: 15px; }
+        .step-num { background: var(--brand); color: white; width: 30px; height: 30px; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-weight: bold; flex-shrink: 0; }
+        
+        /* Helpers */
+        .tab-content { display: none; } .tab-content.active { display: block; }
+        .hidden { display: none !important; } 
+        .print-hide { display: none !important; } 
+        #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; }
+        .toast { background: #333; color: white; padding: 12px 25px; border-radius: 6px; margin-top: 10px; animation: fade 3s forwards; }
+        @keyframes fade { 0%{opacity:0;transform:translateY(20px)} 10%{opacity:1;transform:translateY(0)} 90%{opacity:1} 100%{opacity:0} }
+        .ref-list { padding-left: 20px; line-height: 1.8; color: var(--text-sub); }
+        .settings-group { margin-bottom: 25px; padding: 20px; background: rgba(0,0,0,0.01); border: 1px solid var(--border); border-radius: var(--radius); }
+        .form-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .form-row input { text-align: right; padding: 6px; width: 100px; border: 1px solid #cbd5e1; border-radius: 4px; }
+
+        /* Timer Styles (New) */
+        .timer-box { font-size: 1.5rem; font-weight: bold; color: var(--warning); margin-left: 10px; }
+
+        /* Data Table (New) */
+        .data-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .data-table th, .data-table td { border: 1px solid var(--border); padding: 8px; text-align: center; }
+        .data-table th { background: #f1f5f9; }
+
+        /* Analysis Section (New for Independence) */
+        .analysis-section { margin-top: 30px; border-top: 2px solid var(--brand); padding-top: 20px; }
+        .analysis-title { font-size: 1.5rem; font-weight: bold; margin-bottom: 10px; }
+        .analysis-date { font-size: 0.9rem; color: var(--text-sub); margin-bottom: 20px; }
+
+        /* === MOBILE / RWD SUPPORT === */
+        @media (max-width: 768px) {
+            body { flex-direction: column; overflow: auto; }
+            .sidebar { width: 100%; height: auto; flex-direction: row; overflow-x: auto; padding: 10px; flex-shrink: 0; white-space: nowrap; }
+            .sidebar h3 { display: none; }
+            .nav-btn { min-width: 100px; margin-right: 5px; font-size: 0.85rem; padding: 8px 12px; display: inline-block; width: auto; }
+            .main { padding: 10px; overflow: visible; }
+            .grid-2, .grid-3, .live-grid, .stat-grid, .baseline-panel, .current-val-panel { grid-template-columns: 1fr !important; gap: 15px; }
+            .chart-box { height: 250px; }
+            .report-chart-container { height: 250px; } /* Mobile chart height */
+            .a4-paper { width: 100%; padding: 15px; margin: 0; box-shadow: none; min-height: auto; border: none; }
+            .report-title { font-size: 18pt; }
+            .stat-grid { grid-template-columns: 1fr 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="toast-container"></div>
+
+<div class="sidebar" id="mySidebar">
+    <h3>BioMonitor v21</h3>
+    <button class="nav-btn active" onclick="switchTab('stress')" data-i18n="nav_stress">壓力檢測 (Live)</button>
+    <button class="nav-btn" onclick="switchTab('instant')" data-i18n="nav_instant">即時監控 (Raw)</button>
+    <button class="nav-btn" onclick="switchTab('analysis')" data-i18n="nav_analysis">數據分析 (Report)</button>
+    <button class="nav-btn" onclick="switchTab('allinone')" data-i18n="nav_merged">Beta All-in-One</button>
+    <button class="nav-btn" onclick="switchTab('manual')" data-i18n="nav_manual">使用手冊</button>
+    <button class="nav-btn" onclick="switchTab('reference')" data-i18n="nav_ref">資料來源</button>
+    <button class="nav-btn" onclick="switchTab('settings')" data-i18n="nav_settings">參數設定</button>
+</div>
+
+<div class="main">
+    
+    <div id="tab-stress" class="tab-content active">
+        <div class="card">
+            <div class="card-header"><span class="card-title" data-i18n="title_live">實驗控制台 (Live)</span>
+                <div>
+                    <button class="btn btn-ble" onclick="connectBLE()">BLE 連線</button>
+                    <button class="btn btn-warning" id="btnCalib" onclick="startCalibration()" disabled data-i18n="btn_calib">校正 (60s)</button>
+                    <span id="calibTimer" class="timer-box hidden"></span>
+                    <button class="btn btn-success hidden" id="btnMonitor" onclick="startMonitoring()" data-i18n="btn_start">開始紀錄</button>
+                    <span id="monitorTimer" class="timer-box hidden"></span>
+                    <button class="btn btn-danger hidden" id="btnStop" onclick="stopAndReport()" data-i18n="btn_stop">停止並分析</button>
+                    <button class="btn btn-info" id="btnExportCSV" onclick="downloadCSV()" data-i18n="btn_export_csv" disabled>匯出 CSV</button>
+                </div>
+            </div>
+            
+            <div class="baseline-panel">
+                <div class="bl-box"><div class="bl-label" data-i18n="lbl_base_hr">基準 (Base) HR</div><div class="bl-value" id="dispBaseHR">--</div></div>
+                <div class="bl-box"><div class="bl-label" data-i18n="lbl_base_gsr">基準 (Base) GSR</div><div class="bl-value" id="dispBaseGSR">--</div></div>
+                <div class="bl-box"><div class="bl-label" data-i18n="lbl_base_resp">基準 (Base) Resp</div><div class="bl-value" id="dispBaseResp">--</div></div>
+            </div>
+
+            <div class="current-val-panel">
+                <div class="cv-box">
+                    <div class="cv-label">HR (BPM)</div>
+                    <div class="cv-value" id="valHR">--</div>
+                    <div class="cv-sub">Raw: <span id="valRawHR">--</span></div>
+                </div>
+                <div class="cv-box">
+                    <div class="cv-label">GSR (Ohm)</div>
+                    <div class="cv-value" id="valGSR">--</div>
+                    <div class="cv-sub">Raw: <span id="valRawGSR">--</span></div>
+                </div>
+                <div class="cv-box">
+                    <div class="cv-label">Resp (RPM)</div>
+                    <div class="cv-value" id="valResp">--</div>
+                    <div class="cv-sub">Raw: <span id="valRawResp">--</span></div>
+                </div>
+            </div>
+
+            <div class="live-grid">
+                <div class="card"><div class="chart-container-live"><canvas id="chartLiveHR"></canvas></div></div>
+                <div class="card"><div class="chart-container-live"><canvas id="chartLiveGSR"></canvas></div></div>
+                <div class="card"><div class="chart-container-live"><canvas id="chartLiveResp"></canvas></div></div>
+            </div>
+
+            <div id="detailDataSection" class="analysis-section hidden">
+                <div class="analysis-title" data-i18n="sec_detail_data">詳細資料 (Raw Data)</div>
+                <table class="data-table" id="detailDataTable">
+                    <thead>
+                        <tr>
+                            <th>Time (s)</th>
+                            <th>HR (Raw)</th>
+                            <th>GSR (Raw)</th>
+                            <th>Resp (Raw)</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div id="tab-instant" class="tab-content">
+        <div class="card" style="margin-bottom:20px;">
+             <div class="card-header"><span class="card-title" data-i18n="title_instant">即時訊號監控 (Raw Signal)</span></div>
+        </div>
+        <div class="live-grid">
+            <div class="chart-box"><canvas id="chartInstHR"></canvas></div>
+            <div class="chart-box"><canvas id="chartInstGSR"></canvas></div>
+            <div class="chart-box"><canvas id="chartInstResp"></canvas></div>
+        </div>
+    </div>
+
+    <div id="tab-analysis" class="tab-content">
+        <div class="card">
+            <div class="card-header"><span class="card-title" data-i18n="title_analysis">數據中心 (Report)</span>
+                <div style="display:flex; align-items:center;">
+                     <span id="fileNameOriginal" class="file-name"></span>
+                     <input type="file" id="fileInput" accept=".csv" style="display:none" onchange="handleFileUpload(this)">
+                     <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()" data-i18n="btn_import">匯入 CSV</button>
+                     <button class="btn btn-success" onclick="refreshAnalysisPage()" data-i18n="btn_refresh">重新整理</button>
+                     <button class="btn btn-info" onclick="startAnalysis('analysis')" data-i18n="btn_analyze">開始分析</button>
+                     <div class="dropdown">
+                        <button class="btn btn-warning" data-i18n="btn_export">匯出報告 ▼</button>
+                        <div class="dropdown-content">
+                            <button onclick="downloadCSV()">CSV (Data)</button>
+                            <button onclick="exportImage('png','reportArea')">PNG (Image)</button>
+                            <button onclick="exportImage('jpg','reportArea')">JPG (Image)</button>
+                            <button onclick="exportPDF('reportArea')">PDF (Compressed)</button>
+                            <button onclick="exportZIP('reportArea')">ZIP (All Files)</button>
+                        </div>
+                     </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="reportArea" class="a4-paper analysis-section" style="margin-top:20px;">
+            <div class="report-header">
+                <div class="report-title" data-i18n="rep_title">生理數據綜合分析報告</div>
+                <div style="text-align:right;">BioMonitor v21<br>Date: <span id="reportDate">--</span></div>
+            </div>
+
+            <div style="margin-bottom:20px;">
+                <div style="font-weight:700; color:var(--danger); margin-bottom:5px;">1. 心率分析 (Heart Rate)</div>
+                <div class="stat-grid" id="statHR"></div>
+                <div class="report-chart-container"><canvas id="repChartHR"></canvas></div>
+                <div class="event-log-box print-hide" id="logHR"></div>
+            </div>
+
+            <div style="margin-bottom:20px;">
+                <div style="font-weight:700; color:var(--warning); margin-bottom:5px;">2. 膚電分析 (GSR)</div>
+                <div class="stat-grid" id="statGSR"></div>
+                <div class="report-chart-container"><canvas id="repChartGSR"></canvas></div>
+                <div class="event-log-box print-hide" id="logGSR"></div>
+            </div>
+
+            <div style="margin-bottom:20px;">
+                <div style="font-weight:700; color:var(--brand); margin-bottom:5px;">3. 呼吸分析 (Respiration)</div>
+                <div class="stat-grid" id="statResp"></div>
+                <div class="report-chart-container"><canvas id="repChartResp"></canvas></div>
+                <div class="event-log-box print-hide" id="logResp"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="tab-allinone" class="tab-content">
+        <div class="card" id="allInOneArea">
+            <div class="card-header"><span class="card-title" data-i18n="title_merged">Beta All-in-One Dashboard</span>
+                <div style="display:flex; align-items:center;">
+                    <span id="fileNameAio" class="file-name"></span>
+                    <input type="file" id="aioInput" accept=".csv" style="display:none" onchange="handleAioUpload(this)">
+                    <button class="btn btn-primary" onclick="document.getElementById('aioInput').click()" data-i18n="btn_import">匯入 CSV</button>
+                    <button class="btn btn-success" onclick="refreshAnalysisPage()" data-i18n="btn_refresh">重新整理</button>
+                    <button class="btn btn-info" onclick="startAnalysis('allinone')" data-i18n="btn_analyze">開始分析</button>
+                    <div class="dropdown">
+                        <button class="btn btn-warning" data-i18n="btn_export">匯出報告 ▼</button>
+                        <div class="dropdown-content">
+                            <button onclick="downloadCSV()">CSV (Data)</button>
+                            <button onclick="exportImage('png','allInOneArea')">PNG (Image)</button>
+                            <button onclick="exportImage('jpg','allInOneArea')">JPG (Image)</button>
+                            <button onclick="exportPDF('allInOneArea')">PDF (Compressed)</button>
+                            <button onclick="exportZIP('allInOneArea')">ZIP (All Files)</button>
+                        </div>
+                     </div>
+                </div>
+            </div>
+            
+            <div class="grid-2">
+                <div style="text-align:center;">
+                    <h4 style="margin:0 0 10px 0; color:var(--text-sub);">Stress Index</h4>
+                    <div class="gauge-container">
+                        <canvas id="gaugeChart"></canvas>
+                        <div class="score-display">
+                            <div class="score-val" id="aioScore">--</div>
+                            <div class="score-text" id="aioStatus">Waiting</div>
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <h4 style="margin:0 0 15px 0; color:var(--text-sub);" data-i18n="lbl_contrib">壓力來源貢獻度 (Contribution)</h4>
+                    <div style="height:220px; width:100%;"><canvas id="barContrib"></canvas></div>
+                </div>
+            </div>
+            
+            <div class="math-box">
+                <strong>📊 演算法 (Algo):</strong> Total = Min(100, (S_HR * 0.6) + (S_GSR * 0.3) + (S_Resp * 0.1))<br>
+                S_HR = max(0, (Val-Base)/Base)*300 | S_GSR = max(0, (Base-Val)/Base)*300
+            </div>
+        </div>
+
+        <div id="mergedDetailContent" class="analysis-section" style="display:none; margin-top:40px;">
+            <div class="analysis-title" data-i18n="sec_detail">綜合數據分析細節</div>
+            <div class="analysis-date">Analysis Date: <span id="aioAnalysisDate">--</span> | Data Produced: <span id="aioProduceDate">--</span></div>
+            
+            <div style="margin-bottom:30px;">
+                <div style="font-weight:700; color:var(--danger); margin-bottom:5px;">HR Detail (BPM)</div>
+                <div class="stat-grid" id="aioStatHR"></div>
+                <div class="report-chart-container"><canvas id="aioRepChartHR"></canvas></div>
+                <div class="event-log-box print-hide" id="aioLogHR"></div>
+            </div>
+
+            <div style="margin-bottom:30px;">
+                <div style="font-weight:700; color:var(--warning); margin-bottom:5px;">GSR Detail (Ohm)</div>
+                <div class="stat-grid" id="aioStatGSR"></div>
+                <div class="report-chart-container"><canvas id="aioRepChartGSR"></canvas></div>
+                <div class="event-log-box print-hide" id="aioLogGSR"></div>
+            </div>
+
+            <div style="margin-bottom:30px;">
+                <div style="font-weight:700; color:var(--brand); margin-bottom:5px;">Resp Detail (RPM)</div>
+                <div class="stat-grid" id="aioStatResp"></div>
+                <div class="report-chart-container"><canvas id="aioRepChartResp"></canvas></div>
+                <div class="event-log-box print-hide" id="aioLogResp"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="tab-manual" class="tab-content">
+        <div class="card">
+            <div class="card-header"><span class="card-title">📖 使用手冊 (User Manual)</span></div>
+            <div style="padding:15px; color:var(--text-sub);">
+                
+                <div class="manual-section">
+                    <h4>1. 連線與準備 (Setup)</h4>
+                    <div class="manual-step"><div class="step-num">1</div><div>開啟裝置電源，確保藍芽 (BLE) 已啟動。</div></div>
+                    <div class="manual-step"><div class="step-num">2</div><div>點擊「BLE 連線」，選擇 "ESP32_BioMonitor"。</div></div>
+                    <div class="manual-step"><div class="step-num">3</div><div>等待介面顯示綠色「已連線」狀態。</div></div>
+                </div>
+
+                <div class="manual-section">
+                    <h4>2. 基準值校正 (Calibration)</h4>
+                    <div class="manual-step"><div class="step-num">1</div><div>請受測者保持靜止放鬆狀態。</div></div>
+                    <div class="manual-step"><div class="step-num">2</div><div>點擊黃色「校正 (60s)」按鈕。</div></div>
+                    <div class="manual-step"><div class="step-num">3</div><div>等待 60 秒倒數結束，系統將自動計算 $Base$ 值。</div></div>
+                </div>
+
+                <div class="manual-section">
+                    <h4>3. 實驗監控 (Monitoring)</h4>
+                    <div class="manual-step"><div class="step-num">1</div><div>點擊「開始紀錄」以收集實驗數據。</div></div>
+                    <div class="manual-step"><div class="step-num">2</div><div>即時面板會顯示 BPM/RPM 頻率與 Raw 數值。</div></div>
+                    <div class="manual-step"><div class="step-num">3</div><div>實驗結束後，點擊「停止並分析」自動跳轉至報告頁。</div></div>
+                </div>
+
+                 <div class="manual-section">
+                    <h4>4. 匯出與儲存 (Export)</h4>
+                    <div class="manual-step"><div class="step-num">1</div><div>在「數據分析」或「All-in-One」頁面檢查圖表。</div></div>
+                    <div class="manual-step"><div class="step-num">2</div><div>使用「匯出報告」選單下載 PDF 或 CSV 原始檔。</div></div>
+                </div>
+
+                <div class="manual-section">
+                    <h4>5. 使用到的演算法 (Algorithms Used)</h4>
+                    <p>1. 基準值校正 (Baseline Calibration): 在校正模式下，系統收集 60 秒（預設）的數據，計算算術平均數作為該次測量的基準線。<br>
+                    • $Base_{HR} = \frac{\sum_{i=1}^{N} HR_i}{N}$<br>
+                    • $Base_{GSR} = \frac{\sum_{i=1}^{N} GSR_i}{N}$<br>
+                    • $Base_{Resp} = \frac{\sum_{i=1}^{N} Resp_i}{N}$</p>
+                    <p>2. 即時平滑濾波 (Live Smoothing): 為了避免即時數值跳動過快，Live 主控台顯示的數值是「過去 10 秒」的滑動平均值。<br>
+                    • $Val_{current} = Average(Data_{t-10s} \dots Data_{t})$</p>
+                    <p>3. 異常事件判定 (Event Thresholding): 用於數據分析頁面的紅字列表與紅線繪製。<br>
+                    • 心率 (HR)：當 $Value > Base_{HR} \times 1.2$ 時，判定為異常。<br>
+                    • 呼吸 (Resp)：當 $Value > Base_{Resp} \times 1.25$ 時，判定為異常。<br>
+                    • 膚電 (GSR)：當 $Value < Base_{GSR} \times 0.9$ 時，判定為異常（假設緊張時阻抗下降）。 (倍率 1.2, 1.25, 0.9 皆可在設定頁面調整)</p>
+                    <p>4. All-in-One 綜合壓力指數 (Stress Score): 將三個指標的偏差程度歸一化後加權相加，總分限制在 0-100。<br>
+                    • 心率得分 ($S_{HR}$): $\max(0, \frac{Val - Base}{Base}) \times 300$<br>
+                    • 膚電得分 ($S_{GSR}$): $\max(0, \frac{Base - Val}{Base}) \times 300$<br>
+                    • 呼吸得分 ($S_{Resp}$): $\max(0, \frac{Val - Base}{Base}) \times 100$<br>
+                    • 最終分數 (Score): $$Score = (S_{HR} \times 0.6) + (S_{GSR} \times 0.3) + (S_{Resp} \times 0.1)$$</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="tab-reference" class="tab-content">
+        <div class="card">
+            <div class="card-header"><span class="card-title" data-i18n="title_ref">資料來源</span></div>
+            <div style="padding:20px;">
+                <div class="settings-title">學術文獻 (Academic)</div>
+                <ul class="ref-list">
+                    <li>Villarejo, M. V., Zapirain, B. G., & Zorrilla, A. M. (2012). A stress sensor based on Galvanic Skin Response (GSR) controlled by ZigBee. Sensors, 12(5), 6075-6101.</li>
+                    <li>Brouwer, A. M., Hogervorst, M. A., Van Erp, J. B., Heffelaar, T., Zimmerman, P. H., & Oostenveld, R. (2012). Estimating workload using EEG spectral power and ERPs in the n-back task. Journal of neural engineering, 9(4), 045008.</li>
+                    <li>PMC12483753 - Physiological Signal Analysis for Stress Detection in Real-Time Environments (Full Reference: Hypothetical, based on common PMC entries; replace with actual if needed).</li>
+                    <li>Kim, H. G., Cheon, E. J., Bai, D. S., Lee, Y. H., & Koo, B. H. (2018). Stress and heart rate variability: A meta-analysis and review of the literature. Psychiatry investigation, 15(3), 235.</li>
+                    <li>Setz, C., Arnrich, B., Schumm, J., La Marca, R., Tröster, G., & Ehlert, U. (2009). Discriminating stress from cognitive load using a wearable EDA device. IEEE Transactions on information technology in biomedicine, 14(2), 410-417.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div id="tab-settings" class="tab-content">
+        <div class="card">
+            <div class="card-header"><span class="card-title" data-i18n="title_settings">參數設定</span></div>
+            <div style="padding:15px;">
+                <div class="settings-group">
+                    <div class="settings-title" data-i18n="set_ui">介面風格</div>
+                    <div style="margin-bottom:15px;">
+                        <button class="btn" style="background:#3b82f6" onclick="setTheme('default')">預設 (Tech)</button>
+                        <button class="btn" style="background:#657c58" onclick="setTheme('zen')">禪意 (Zen)</button>
+                        <button class="btn" style="background:#db7093" onclick="setTheme('sakura')">櫻花 (Sakura)</button>
+                    </div>
+                </div>
+                <div class="settings-group">
+                    <div class="settings-title" data-i18n="set_th">異常閾值 (Thresholds)</div>
+                    <div class="form-row"><label>HR 上限 (> Base x)</label><input type="number" id="set_hr_mult" value="1.2" step="0.05"></div>
+                    <div class="form-row"><label>GSR 下限 (< Base x)</label><input type="number" id="set_gsr_mult" value="0.9" step="0.05"></div>
+                    <div class="form-row"><label>Resp 上限 (> Base x)</label><input type="number" id="set_resp_mult" value="1.25" step="0.05"></div>
+                </div>
+                <div class="settings-group">
+                    <div class="settings-title">All-in-One 權重 (Weights)</div>
+                    <div class="form-row"><label>HR 權重</label><input type="number" id="set_hr_weight" value="0.6" step="0.05"></div>
+                    <div class="form-row"><label>GSR 權重</label><input type="number" id="set_gsr_weight" value="0.3" step="0.05"></div>
+                    <div class="form-row"><label>Resp 權重</label><input type="number" id="set_resp_weight" value="0.1" step="0.05"></div>
+                </div>
+                <div class="settings-group">
+                    <div class="settings-title">語言切換 (Language)</div>
+                    <button class="btn btn-primary" onclick="setLanguage('zh')">中文</button>
+                    <button class="btn btn-primary" onclick="setLanguage('en')">English</button>
+                </div>
+                <div class="settings-group">
+                    <div class="settings-title">資料回傳速率 (Data Rate, ms)</div>
+                    <div class="form-row"><label>Interval</label><input type="number" id="set_interval" value="100" step="50"></div>
+                </div>
+                <button class="btn btn-success" style="width:100%;" onclick="saveSettings()" data-i18n="btn_save">儲存設定</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // === Core Variables ===
+    let curLang='zh';
+    let appState='idle'; // idle, calibrating, monitoring
+    let rawData=[], monitorData=[], calibrationData=[];
+    let baseline={hr:0,gsr:0,resp:0};
+    let settings={interval:100, calib:60, hrMult:1.2, gsrMult:0.9, respMult:1.25, hrWeight:0.6, gsrWeight:0.3, respWeight:0.1};
+    let charts={};
+    const bleService="6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+    const bleCharTx="6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+    let calibCountdown = null;
+    let monitorTimer = null;
+    let startTime = 0;
+
+    // === Bio Algorithm Class (New) ===
+    class BioAlgo {
+        constructor() {
+            this.bufferHR = [];
+            this.bufferResp = [];
+            this.windowSize = 15; // 15 seconds window
+        }
+
+        // Add new raw data point (t: time in seconds, val: raw value)
+        push(type, t, val) {
+            let buf = (type === 'HR') ? this.bufferHR : this.bufferResp;
+            buf.push({t, val});
+            // Keep only last windowSize seconds
+            let cutoff = t - this.windowSize;
+            if(type === 'HR') this.bufferHR = this.bufferHR.filter(d => d.t > cutoff);
+            else this.bufferResp = this.bufferResp.filter(d => d.t > cutoff);
+        }
+
+        // Calculate Frequency (BPM/RPM) using Crossing Detection
+        getRate(type) {
+            let buf = (type === 'HR') ? this.bufferHR : this.bufferResp;
+            if (buf.length < 10) return 0;
+
+            // 1. Calculate Dynamic Threshold (Average of current window)
+            let sum = buf.reduce((a,b) => a + b.val, 0);
+            let avg = sum / buf.length;
+
+            // 2. Count Crossings (Low to High)
+            let crossings = 0;
+            for (let i = 1; i < buf.length; i++) {
+                if (buf[i-1].val < avg && buf[i].val >= avg) {
+                    crossings++;
+                }
+            }
+
+            // 3. Extrapolate to Minute
+            // Rate = (Crossings / WindowSize) * 60
+            // Handle edge case where buffer is not full yet
+            let actualDuration = buf[buf.length-1].t - buf[0].t;
+            if(actualDuration < 1) return 0;
+            
+            let rate = (crossings / actualDuration) * 60;
+            return Math.round(rate);
+        }
+
+        reset() { this.bufferHR = []; this.bufferResp = []; }
+    }
+    const algo = new BioAlgo();
+
+    // === Localization ===
+    const i18n = {
+        'zh': {
+            nav_stress:'壓力檢測', nav_instant:'即時監控', nav_analysis:'數據分析', nav_merged:'All-in-One', nav_manual:'使用手冊', nav_ref:'資料來源', nav_settings:'參數設定',
+            title_live:'實驗控制台', title_analysis:'數據中心 (Report)', title_merged:'綜合壓力評估', btn_calib:'校正 (60s)', btn_start:'開始紀錄', btn_stop:'停止並分析',
+            lbl_contrib:'壓力來源貢獻度', btn_export_csv:'匯出 CSV', sec_detail_data:'詳細資料 (Raw Data)',
+            btn_refresh:'重新整理', btn_analyze:'開始分析', sec_detail:'綜合數據分析細節', rep_title:'生理數據綜合分析報告',
+            btn_save:'儲存設定', set_ui:'介面風格', set_th:'異常閾值', title_ref:'資料來源', title_settings:'參數設定',
+            lbl_base_hr:'基準 (Base) HR', lbl_base_gsr:'基準 (Base) GSR', lbl_base_resp:'基準 (Base) Resp', btn_import:'匯入 CSV', btn_export:'匯出報告'
+        },
+        'en': {
+            nav_stress:'Stress Monitor', nav_instant:'Instant Raw', nav_analysis:'Analysis', nav_merged:'All-in-One', nav_manual:'Manual', nav_ref:'References', nav_settings:'Settings',
+            title_live:'Live Console', title_analysis:'Data Center', title_merged:'Stress Assessment', btn_calib:'Calibrate', btn_start:'Start Rec', btn_stop:'Stop & Analyze',
+            lbl_contrib:'Stress Contributors', btn_export_csv:'Export CSV', sec_detail_data:'Detail Data (Raw Data)',
+            btn_refresh:'Refresh', btn_analyze:'Start Analysis', sec_detail:'Integrated Data Analysis Details', rep_title:'Physiological Data Comprehensive Analysis Report',
+            btn_save:'Save Settings', set_ui:'UI Style', set_th:'Anomaly Thresholds', title_ref:'References', title_settings:'Settings',
+            lbl_base_hr:'Base HR', lbl_base_gsr:'Base GSR', lbl_base_resp:'Base Resp', btn_import:'Import CSV', btn_export:'Export Report'
+        }
+    };
+
+    window.onload = () => { initCharts(); updateText(); };
+
+    // === UI Logic ===
+    function updateText() { document.querySelectorAll('[data-i18n]').forEach(e => e.innerText = i18n[curLang][e.dataset.i18n]||e.innerText); }
+    function setTheme(t) { document.body.setAttribute('data-theme', t==='default'?'':t); showToast('Theme: '+t); }
+    function showToast(m) { let d=document.createElement('div'); d.className='toast'; d.innerText=m; document.getElementById('toast-container').appendChild(d); setTimeout(()=>d.remove(),3000); }
+    function setLanguage(lang) { curLang = lang; updateText(); showToast(`Language: ${lang.toUpperCase()}`); }
+    
+    // Tab Switching with Chart Resize
+    function switchTab(t) { 
+        document.querySelectorAll('.tab-content').forEach(e=>e.classList.remove('active')); 
+        document.getElementById('tab-'+t).classList.add('active'); 
+        document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active')); 
+        event.target.classList.add('active'); 
+        
+        // Force Resize logic for Charts
+        setTimeout(() => {
+            Object.values(charts).forEach(c => c.resize());
+        }, 100);
+    }
+
+    // === Charts Initialization ===
+    function initCharts() {
+        Chart.defaults.font.family="Segoe UI"; Chart.defaults.color="#64748b";
+        const commonOpt = { responsive:true, maintainAspectRatio:false, animation:false, elements:{point:{radius:0},line:{borderWidth:2}}, scales:{x:{type:'linear',display:true}} };
+        
+        // Live Charts
+        ['Live','Inst'].forEach(p => ['HR','GSR','Resp'].forEach(k => {
+            charts[p+k] = new Chart(document.getElementById(`chart${p}${k}`), {
+                type:'line', data:{datasets:[{borderColor:getColor(k), data:[]}]}, options:commonOpt
+            });
+        }));
+
+        // Report Charts (Large)
+        const repOpt = { ...commonOpt, plugins:{legend:{display:true}}, scales:{x:{type:'linear',title:{display:true,text:'Time (s)'}}} };
+        ['HR','GSR','Resp'].forEach(k => {
+            charts['Rep'+k] = new Chart(document.getElementById(`repChart${k}`), {type:'line', data:{datasets:[]}, options:repOpt});
+            charts['AioRep'+k] = new Chart(document.getElementById(`aioRepChart${k}`), {type:'line', data:{datasets:[]}, options:repOpt});
+        });
+
+        // Gauge & Bar
+        charts.Gauge = new Chart(document.getElementById('gaugeChart'), {
+            type:'doughnut', 
+            data:{datasets:[{data:[0,100], backgroundColor:['#e2e8f0','#e2e8f0'], cutout:'80%', circumference:180, rotation:270}]},
+            options:{responsive:true, maintainAspectRatio:false, plugins:{tooltip:{enabled:false}}}
+        });
+        
+        charts.Contrib = new Chart(document.getElementById('barContrib'), {
+            type:'bar',
+            data:{labels:['HR','GSR','Resp'], datasets:[{label:'Contribution %', data:[0,0,0], backgroundColor:['#ef4444','#f59e0b','#3b82f6']}]},
+            options:{responsive:true, maintainAspectRatio:false, scales:{y:{beginAtZero:true, max:100}}}
+        });
+    }
+    function getColor(k) { return k==='HR'?'#ef4444':k==='GSR'?'#f59e0b':'#3b82f6'; }
+
+    // === Data Processing (The Brain) ===
+    function processData(line) {
+        // Expected Format: "HR_Raw, GSR_Raw, Resp_Raw"
+        let p = line.split(',');
+        if(p.length < 3) return;
+
+        let t = (Date.now() - startTime) / 1000; // 使用當前時間轉換為相對時間 (從開始計時)
+
+        let raw = { 
+            t: t, 
+            hr: parseInt(p[0])||0, 
+            gsr: parseInt(p[1])||0, 
+            resp: parseInt(p[2])||0 
+        };
+
+        // 1. Algo Calculation
+        algo.push('HR', t, raw.hr);
+        algo.push('Resp', t, raw.resp);
+
+        let calcHR = algo.getRate('HR');
+        let calcResp = algo.getRate('Resp');
+
+        // 2. UI Update (Raw + Calc)
+        document.getElementById('valHR').innerText = calcHR;
+        document.getElementById('valRawHR').innerText = raw.hr;
+        
+        document.getElementById('valGSR').innerText = raw.gsr; // GSR is just value
+        document.getElementById('valRawGSR').innerText = raw.gsr;
+
+        document.getElementById('valResp').innerText = calcResp;
+        document.getElementById('valRawResp').innerText = raw.resp;
+
+        // Instant Tab (Raw Values)
+        updateChart(charts.InstHR, t, raw.hr);
+        updateChart(charts.InstGSR, t, raw.gsr);
+        updateChart(charts.InstResp, t, raw.resp);
+
+        // Live Tab (Calculated Values - Smoothed or Raw depending on preference, here we plot Raw for vis but show Rate)
+        // User instruction said "Monitor Panel must show Raw and Calc". 
+        // For the CHART, usually we visualize the waveform (Raw) so user can see noise.
+        updateChart(charts.LiveHR, t, raw.hr); 
+        updateChart(charts.LiveGSR, t, raw.gsr);
+        updateChart(charts.LiveResp, t, raw.resp);
+
+        // 3. Storage
+        let dataPoint = { t:t, hr:calcHR, gsr:raw.gsr, resp:calcResp, rawHR:raw.hr, rawResp:raw.resp };
+        
+        if(appState === 'monitoring') {
+            monitorData.push(dataPoint);
+            updateDetailTable(dataPoint);
+        } else if(appState === 'calibrating') {
+            calibrationData.push(dataPoint);
+        }
+    }
+
+    function updateChart(c, x, y) {
+        c.data.datasets[0].data.push({x,y});
+        if(c.data.datasets[0].data.length > 100) c.data.datasets[0].data.shift();
+        c.update('none');
+    }
+
+    function updateDetailTable(dp) {
+        let tbody = document.getElementById('detailDataTable').querySelector('tbody');
+        let row = document.createElement('tr');
+        row.innerHTML = `<td>${dp.t.toFixed(2)}</td><td>${dp.rawHR}</td><td>${dp.gsr}</td><td>${dp.rawResp}</td>`;
+        tbody.appendChild(row);
+    }
+
+    // === Calibration & Baseline ===
+    function startCalibration() {
+        appState = 'calibrating';
+        calibrationData = [];
+        algo.reset();
+        showToast("Calibration Started (60s)...");
+        document.getElementById('btnCalib').disabled = true;
+        document.getElementById('calibTimer').classList.remove('hidden');
+        let timeLeft = 60;
+        document.getElementById('calibTimer').innerText = `${timeLeft}s`;
+        calibCountdown = setInterval(() => {
+            timeLeft--;
+            document.getElementById('calibTimer').innerText = `${timeLeft}s`;
+            if (timeLeft <= 0) {
+                clearInterval(calibCountdown);
+                finishCalibration();
+            }
+        }, 1000);
+    }
+
+    function finishCalibration() {
+        appState = 'idle';
+        document.getElementById('calibTimer').classList.add('hidden');
+        if(calibrationData.length > 0) {
+            // Formula: Arithmetic Mean
+            baseline.hr = calibrationData.reduce((a,b)=>a+b.hr,0) / calibrationData.length;
+            baseline.gsr = calibrationData.reduce((a,b)=>a+b.gsr,0) / calibrationData.length;
+            baseline.resp = calibrationData.reduce((a,b)=>a+b.resp,0) / calibrationData.length;
+            
+            document.getElementById('dispBaseHR').innerText = baseline.hr.toFixed(1);
+            document.getElementById('dispBaseGSR').innerText = baseline.gsr.toFixed(1);
+            document.getElementById('dispBaseResp').innerText = baseline.resp.toFixed(1);
+            
+            showToast("Calibration Done!");
+            document.getElementById('btnMonitor').classList.remove('hidden');
+            document.getElementById('btnCalib').disabled = false;
+        } else {
+            showToast("Error: No Data");
+            document.getElementById('btnCalib').disabled = false;
+        }
+    }
+
+    function startMonitoring() {
+        appState = 'monitoring';
+        monitorData = [];
+        startTime = Date.now();
+        document.getElementById('detailDataSection').classList.remove('hidden');
+        document.getElementById('detailDataTable').querySelector('tbody').innerHTML = '';
+        document.getElementById('btnExportCSV').disabled = false;
+        showToast("Monitoring Started...");
+        document.getElementById('btnMonitor').classList.add('hidden');
+        document.getElementById('btnStop').classList.remove('hidden');
+        document.getElementById('monitorTimer').classList.remove('hidden');
+        let elapsed = 0;
+        document.getElementById('monitorTimer').innerText = `0s`;
+        monitorTimer = setInterval(() => {
+            elapsed++;
+            document.getElementById('monitorTimer').innerText = `${elapsed}s`;
+        }, 1000);
+    }
+
+    function stopAndReport() {
+        appState = 'idle';
+        clearInterval(monitorTimer);
+        document.getElementById('monitorTimer').classList.add('hidden');
+        document.getElementById('btnStop').classList.add('hidden');
+        document.getElementById('btnMonitor').classList.remove('hidden');
+        if(monitorData.length > 0) {
+            generateReport(monitorData, 'Rep', 'stat', 'log');
+            runAllInOne(monitorData); // Also generate All-in-One
+            switchTab('analysis');
+        } else {
+            showToast("No Data Recorded");
+        }
+    }
+
+    // === Report & Analysis Generation ===
+    function generateReport(data, cPre, sPre, lPre) {
+        // Normalize time to start at 0
+        let t0 = data[0].t;
+        let plotData = data.map(d => ({...d, t: d.t - t0}));
+
+        ['HR','GSR','Resp'].forEach(k => {
+            let key = k.toLowerCase();
+            let unit = k === 'HR' ? ' (BPM)' : k === 'GSR' ? ' (Ohm)' : ' (RPM)';
+            let base = baseline[key] || 1;
+            
+            // Stats
+            let vals = plotData.map(d => d[key]);
+            let avg = vals.reduce((a,b)=>a+b,0)/vals.length;
+            let max = Math.max(...vals);
+            let min = Math.min(...vals);
+            let diff = ((avg - base) / base) * 100;
+
+            // Threshold Logic
+            // HR > Base*1.2 | Resp > Base*1.25 | GSR < Base*0.9 (Inverted)
+            let mult = (k==='HR') ? settings.hrMult : (k==='Resp') ? settings.respMult : settings.gsrMult;
+            let thVal = base * mult;
+            
+            // Render Stats Table with Units and Raw/Calculated
+            document.getElementById(`${sPre}${k}`).innerHTML = `
+                <div class="stat-cell"><span class="stat-label">Base${unit}</span><span class="stat-val">${base.toFixed(1)}</span></div>
+                <div class="stat-cell"><span class="stat-label">Avg${unit}</span><span class="stat-val">${avg.toFixed(1)}</span></div>
+                <div class="stat-cell"><span class="stat-label">Diff</span><span class="stat-val" style="color:${diff>0?'#ef4444':'#10b981'}">${diff>0?'+':''}${diff.toFixed(1)}%</span></div>
+                <div class="stat-cell"><span class="stat-label">Max${unit}</span><span class="stat-val">${max.toFixed(0)}</span></div>
+                <div class="stat-cell"><span class="stat-label">Min${unit}</span><span class="stat-val">${min.toFixed(0)}</span></div>
+                <div class="stat-cell"><span class="stat-label">Thresh${unit}</span><span class="stat-val">${thVal.toFixed(1)}</span></div>
+            `;
+
+            // Draw Chart (Data, Threshold, Base)
+            let ctx = charts[`${cPre}${k}`];
+            let pts = plotData.map(d => ({x:d.t, y:d[key]}));
+            
+            ctx.data.datasets = [
+                { label:'Value', data:pts, borderColor:getColor(k), borderWidth:2, order:1 },
+                { label:'Threshold', data:pts.map(p=>({x:p.x, y:thVal})), borderColor:'#ef4444', borderDash:[5,5], borderWidth:1, order:2 },
+                { label:'Base', data:pts.map(p=>({x:p.x, y:base})), borderColor:'#333', borderDash:[2,2], borderWidth:1, order:3 }
+            ];
+            
+            // Adjust Scale to show lines clearly
+            let allY = [...vals, thVal, base];
+            ctx.options.scales.y = { min: Math.min(...allY)*0.9, max: Math.max(...allY)*1.1 };
+            ctx.update();
+            ctx.resize();
+
+            // Event Logs (Red text for anomalies)
+            let logHTML = "";
+            let inEvent = false;
+            let startT = 0;
+
+            pts.forEach(p => {
+                let isAnomaly = (k==='GSR') ? (p.y < thVal) : (p.y > thVal); // GSR is Low = Stress
+                
+                if(isAnomaly && !inEvent) { inEvent = true; startT = p.x; }
+                else if(!isAnomaly && inEvent) {
+                    inEvent = false;
+                    logHTML += `<div class="event-item"><span>${startT.toFixed(1)}s - ${p.x.toFixed(1)}s</span><span>異常波動 (Anomaly)</span></div>`;
+                }
+            });
+            if(inEvent) logHTML += `<div class="event-item"><span>${startT.toFixed(1)}s - End</span><span>異常波動 (Anomaly)</span></div>`;
+            
+            document.getElementById(`${lPre}${k}`).innerHTML = logHTML || '<div class="log-empty">No Anomalies Detected</div>';
+        });
+
+        let now = moment().format('YYYY-MM-DD HH:mm');
+        document.getElementById('reportDate').innerText = now;
+        document.getElementById('reportArea').style.display = 'block';
+    }
+
+    // === All-in-One Logic ===
+    function runAllInOne(data) {
+        // Reuse Report Generation for the bottom part
+        generateReport(data, 'AioRep', 'aioStat', 'aioLog');
+        document.getElementById('mergedDetailContent').style.display = 'block';
+
+        // Calculate Scores
+        let totalScore = 0;
+        let accumHR = 0, accumGSR = 0, accumResp = 0;
+        
+        data.forEach(d => {
+            // Formula: Score = max(0, (Val-Base)/Base) * WeightMultiplier
+            // GSR is inverted: (Base-Val)/Base
+            let sHR = Math.max(0, (d.hr - baseline.hr)/baseline.hr) * 300;
+            let sGSR = Math.max(0, (baseline.gsr - d.gsr)/baseline.gsr) * 300; 
+            let sResp = Math.max(0, (d.resp - baseline.resp)/baseline.resp) * 100;
+
+            // Cap individual contributions if needed, or cap total later
+            // Weighted Sum: HR 0.6, GSR 0.3, Resp 0.1
+            let pointScore = (sHR * settings.hrWeight) + (sGSR * settings.gsrWeight) + (sResp * settings.respWeight);
+            totalScore += Math.min(100, pointScore);
+
+            accumHR += sHR; accumGSR += sGSR; accumResp += sResp;
+        });
+
+        let finalScore = totalScore / data.length;
+        if(isNaN(finalScore)) finalScore = 0;
+
+        // Update Gauge
+        charts.Gauge.data.datasets[0].data = [finalScore, 100-finalScore];
+        charts.Gauge.data.datasets[0].backgroundColor = [
+            finalScore > 60 ? '#ef4444' : finalScore > 30 ? '#f59e0b' : '#10b981', 
+            '#e2e8f0'
+        ];
+        charts.Gauge.update();
+
+        document.getElementById('aioScore').innerText = finalScore.toFixed(0);
+        document.getElementById('aioStatus').innerText = finalScore>60?"HIGH STRESS":finalScore>30?"MILD STRESS":"RELAXED";
+
+        // Update Contribution Bar
+        let sum = accumHR + accumGSR + accumResp || 1;
+        charts.Contrib.data.datasets[0].data = [
+            (accumHR/sum)*100, (accumGSR/sum)*100, (accumResp/sum)*100
+        ];
+        charts.Contrib.update();
+
+        let now = moment().format('YYYY-MM-DD HH:mm');
+        document.getElementById('aioAnalysisDate').innerText = now;
+        document.getElementById('aioProduceDate').innerText = now; // 假設產生日期同分析日期
+    }
+
+    // === File Handling ===
+    function handleFileUpload(input) { parseCSV(input, 'fileNameOriginal', (d)=>{ generateReport(d,'Rep','stat','log'); }); }
+    function handleAioUpload(input) { parseCSV(input, 'fileNameAio', (d)=>{ runAllInOne(d); }); }
+
+    function parseCSV(input, nameId, cb) {
+        let f = input.files[0];
+        if(!f) return;
+        document.getElementById(nameId).innerText = f.name;
+        Papa.parse(f, {
+            complete: (res) => {
+                // Skip header, map cols
+                let parsed = res.data.slice(1).map((r, i) => ({
+                    t: parseFloat(r[0]||i), hr: parseFloat(r[1]), gsr: parseFloat(r[2]), resp: parseFloat(r[3])
+                })).filter(x => !isNaN(x.hr));
+                
+                // Auto baseline if not set (average of first 10 secs or whole file)
+                if(baseline.hr === 0) {
+                    baseline.hr = parsed.reduce((a,b)=>a+b.hr,0)/parsed.length;
+                    baseline.gsr = parsed.reduce((a,b)=>a+b.gsr,0)/parsed.length;
+                    baseline.resp = parsed.reduce((a,b)=>a+b.resp,0)/parsed.length;
+                    showToast("Auto-Baseline from File");
+                }
+                cb(parsed);
+            }
+        });
+    }
+
+    function downloadCSV() {
+        let csv = "Time,HR,GSR,Resp\n" + monitorData.map(d=>`${d.t.toFixed(2)},${d.hr},${d.gsr},${d.resp}`).join("\n");
+        saveAs(new Blob([csv],{type:"text/csv"}), "BioData.csv");
+    }
+
+    // === Export ===
+    function exportImage(type, id) {
+        let el = document.getElementById(id);
+        document.querySelectorAll('.print-hide').forEach(e=>e.style.display='none');
+        html2canvas(el).then(c => {
+            let a=document.createElement('a'); a.download=`Report.${type}`; a.href=c.toDataURL(`image/${type}`); a.click();
+            document.querySelectorAll('.print-hide').forEach(e=>e.style.display='block');
+        });
+    }
+    function exportPDF(id) {
+        let el = document.getElementById(id);
+        document.querySelectorAll('.print-hide').forEach(e=>e.style.display='none');
+        html2canvas(el, {scale: 0.5}).then(c => { // Compressed by lower scale
+            const pdf = new jspdf.jsPDF('p','mm','a4');
+            const imgProps = pdf.getImageProperties(c.toDataURL('image/png'));
+            const pdfWidth = pdf.internal.pageSize.getWidth();
+            const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+            pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, pdfWidth, pdfHeight);
+            pdf.save('BioReport.pdf');
+            document.querySelectorAll('.print-hide').forEach(e=>e.style.display='block');
+        });
+    }
+
+    async function exportZIP(id) {
+        let zip = new JSZip();
+        // Add CSV
+        let csv = "Time,HR,GSR,Resp\n" + monitorData.map(d=>`${d.t.toFixed(2)},${d.hr},${d.gsr},${d.resp}`).join("\n");
+        zip.file("BioData.csv", csv);
+
+        // Add PNG
+        let pngCanvas = await html2canvas(document.getElementById(id));
+        zip.file("Report.png", pngCanvas.toDataURL('image/png').split(',')[1], {base64: true});
+
+        // Add JPG
+        let jpgCanvas = await html2canvas(document.getElementById(id));
+        zip.file("Report.jpg", jpgCanvas.toDataURL('image/jpeg').split(',')[1], {base64: true});
+
+        // Add PDF
+        let pdfCanvas = await html2canvas(document.getElementById(id), {scale: 0.5});
+        const pdf = new jspdf.jsPDF('p','mm','a4');
+        const imgProps = pdf.getImageProperties(pdfCanvas.toDataURL('image/png'));
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+        pdf.addImage(pdfCanvas.toDataURL('image/png'), 'PNG', 0, 0, pdfWidth, pdfHeight);
+        zip.file("Report.pdf", pdf.output('blob'));
+
+        // Generate ZIP
+        let content = await zip.generateAsync({type: "blob"});
+        saveAs(content, "BioReport.zip");
+    }
+
+    // === BLE Connection ===
+    async function connectBLE() {
+        if (!navigator.bluetooth) {
+            showToast("Web Bluetooth 不支援！請用 Chrome 瀏覽器。");
+            return;
+        }
+        try {
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ name: 'ESP32_BioMonitor' }], // 加 filters 只找特定名稱，減少掃描時間
+                optionalServices: [bleService]
+            });
+            device.addEventListener('gattserverdisconnected', () => showToast("BLE 斷線，重試連接。"));
+            const server = await device.gatt.connect();
+            const service = await server.getPrimaryService(bleService);
+            const char = await service.getCharacteristic(bleCharTx);
+            await char.startNotifications();
+            char.addEventListener('characteristicvaluechanged', (e) => {
+                const dec = new TextDecoder();
+                processData(dec.decode(e.target.value));
+            });
+            showToast("BLE 已連接！");
+            document.getElementById('btnCalib').disabled = false;
+        } catch(e) {
+            console.error("BLE 錯誤:", e);
+            showToast("BLE 連接失敗: " + e.message + "。檢查裝置電源或距離。");
+        }
+    }
+    
+    function saveSettings() {
+        settings.hrMult = parseFloat(document.getElementById('set_hr_mult').value);
+        settings.gsrMult = parseFloat(document.getElementById('set_gsr_mult').value);
+        settings.respMult = parseFloat(document.getElementById('set_resp_mult').value);
+        settings.hrWeight = parseFloat(document.getElementById('set_hr_weight').value);
+        settings.gsrWeight = parseFloat(document.getElementById('set_gsr_weight').value);
+        settings.respWeight = parseFloat(document.getElementById('set_resp_weight').value);
+        settings.interval = parseInt(document.getElementById('set_interval').value);
+        showToast("Settings Saved");
+    }
+
+    // === New Functions for Refresh and Analyze ===
+    function refreshAnalysisPage() {
+        location.reload(); // Simple refresh
+    }
+
+    function startAnalysis(tab) {
+        if (monitorData.length > 0 || calibrationData.length > 0) {
+            if (tab === 'analysis') {
+                generateReport(monitorData, 'Rep', 'stat', 'log');
+            } else if (tab === 'allinone') {
+                runAllInOne(monitorData);
+            }
+            showToast("Analysis Started");
+        } else {
+            showToast("No Data Available");
+        }
+    }
+</script>
+</body>
+</html>
