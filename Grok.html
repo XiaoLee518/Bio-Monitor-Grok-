@@ -550,12 +550,26 @@
         }
     };
 
-    window.onload = () => { initCharts(); updateText(); };
+    window.onload = () => { 
+        try {
+            initCharts(); 
+            updateText(); 
+        } catch (e) {
+            console.error("Onload error:", e);
+            showToast("初始化失敗，請重新載入頁面。");
+        }
+    };
 
     // === UI Logic ===
     function updateText() { document.querySelectorAll('[data-i18n]').forEach(e => e.innerText = i18n[curLang][e.dataset.i18n]||e.innerText); }
     function setTheme(t) { document.body.setAttribute('data-theme', t==='default'?'':t); showToast('Theme: '+t); }
-    function showToast(m) { let d=document.createElement('div'); d.className='toast'; d.innerText=m; document.getElementById('toast-container').appendChild(d); setTimeout(()=>d.remove(),3000); }
+    function showToast(m) { 
+        let d=document.createElement('div'); 
+        d.className='toast'; 
+        d.innerText=m; 
+        document.getElementById('toast-container').appendChild(d); 
+        setTimeout(()=>d.remove(),3000); 
+    }
     function setLanguage(lang) { curLang = lang; updateText(); showToast(`Language: ${lang.toUpperCase()}`); }
     
     // Tab Switching with Chart Resize
@@ -573,387 +587,519 @@
 
     // === Charts Initialization ===
     function initCharts() {
-        Chart.defaults.font.family="Segoe UI"; Chart.defaults.color="#64748b";
-        const commonOpt = { responsive:true, maintainAspectRatio:false, animation:false, elements:{point:{radius:0},line:{borderWidth:2}}, scales:{x:{type:'linear',display:true}} };
-        
-        // Live Charts
-        ['Live','Inst'].forEach(p => ['HR','GSR','Resp'].forEach(k => {
-            charts[p+k] = new Chart(document.getElementById(`chart${p}${k}`), {
-                type:'line', data:{datasets:[{borderColor:getColor(k), data:[]}]}, options:commonOpt
+        try {
+            Chart.defaults.font.family="Segoe UI"; Chart.defaults.color="#64748b";
+            const commonOpt = { responsive:true, maintainAspectRatio:false, animation:false, elements:{point:{radius:0},line:{borderWidth:2}}, scales:{x:{type:'linear',display:true}} };
+            
+            // Live Charts
+            ['Live','Inst'].forEach(p => ['HR','GSR','Resp'].forEach(k => {
+                let canvas = document.getElementById(`chart${p}${k}`);
+                if (!canvas) throw new Error(`Canvas ${p}${k} not found`);
+                charts[p+k] = new Chart(canvas, {
+                    type:'line', data:{datasets:[{borderColor:getColor(k), data:[]}]}, options:commonOpt
+                });
+            }));
+
+            // Report Charts (Large)
+            const repOpt = { ...commonOpt, plugins:{legend:{display:true}}, scales:{x:{type:'linear',title:{display:true,text:'Time (s)'}}} };
+            ['HR','GSR','Resp'].forEach(k => {
+                let repCanvas = document.getElementById(`repChart${k}`);
+                if (!repCanvas) throw new Error(`Report canvas repChart${k} not found`);
+                charts['Rep'+k] = new Chart(repCanvas, {type:'line', data:{datasets:[]}, options:repOpt});
+                let aioCanvas = document.getElementById(`aioRepChart${k}`);
+                if (!aioCanvas) throw new Error(`AIO canvas aioRepChart${k} not found`);
+                charts['AioRep'+k] = new Chart(aioCanvas, {type:'line', data:{datasets:[]}, options:repOpt});
             });
-        }));
 
-        // Report Charts (Large)
-        const repOpt = { ...commonOpt, plugins:{legend:{display:true}}, scales:{x:{type:'linear',title:{display:true,text:'Time (s)'}}} };
-        ['HR','GSR','Resp'].forEach(k => {
-            charts['Rep'+k] = new Chart(document.getElementById(`repChart${k}`), {type:'line', data:{datasets:[]}, options:repOpt});
-            charts['AioRep'+k] = new Chart(document.getElementById(`aioRepChart${k}`), {type:'line', data:{datasets:[]}, options:repOpt});
-        });
-
-        // Gauge & Bar
-        charts.Gauge = new Chart(document.getElementById('gaugeChart'), {
-            type:'doughnut', 
-            data:{datasets:[{data:[0,100], backgroundColor:['#e2e8f0','#e2e8f0'], cutout:'80%', circumference:180, rotation:270}]},
-            options:{responsive:true, maintainAspectRatio:false, plugins:{tooltip:{enabled:false}}}
-        });
-        
-        charts.Contrib = new Chart(document.getElementById('barContrib'), {
-            type:'bar',
-            data:{labels:['HR','GSR','Resp'], datasets:[{label:'Contribution %', data:[0,0,0], backgroundColor:['#ef4444','#f59e0b','#3b82f6']}]},
-            options:{responsive:true, maintainAspectRatio:false, scales:{y:{beginAtZero:true, max:100}}}
-        });
+            // Gauge & Bar
+            let gaugeCanvas = document.getElementById('gaugeChart');
+            if (!gaugeCanvas) throw new Error('Gauge canvas not found');
+            charts.Gauge = new Chart(gaugeCanvas, {
+                type:'doughnut', 
+                data:{datasets:[{data:[0,100], backgroundColor:['#e2e8f0','#e2e8f0'], cutout:'80%', circumference:180, rotation:270}]},
+                options:{responsive:true, maintainAspectRatio:false, plugins:{tooltip:{enabled:false}}}
+            });
+            
+            let barCanvas = document.getElementById('barContrib');
+            if (!barCanvas) throw new Error('Bar canvas not found');
+            charts.Contrib = new Chart(barCanvas, {
+                type:'bar',
+                data:{labels:['HR','GSR','Resp'], datasets:[{label:'Contribution %', data:[0,0,0], backgroundColor:['#ef4444','#f59e0b','#3b82f6']}]},
+                options:{responsive:true, maintainAspectRatio:false, scales:{y:{beginAtZero:true, max:100}}}
+            });
+        } catch (e) {
+            console.error("Chart init error:", e);
+            showToast("圖表初始化失敗，請檢查畫布元素。");
+        }
     }
     function getColor(k) { return k==='HR'?'#ef4444':k==='GSR'?'#f59e0b':'#3b82f6'; }
 
     // === Data Processing (The Brain) ===
     function processData(line) {
-        // Expected Format: "HR_Raw, GSR_Raw, Resp_Raw"
-        let p = line.split(',');
-        if(p.length < 3) return;
+        try {
+            // Expected Format: "timestamp,HR_Raw, GSR_Raw, Resp_Raw"
+            let p = line.split(',');
+            if(p.length < 4) throw new Error("Invalid data format");
 
-        let t = (Date.now() - startTime) / 1000; // 使用當前時間轉換為相對時間 (從開始計時)
+            let timestamp = parseInt(p[0]) || Date.now(); // Arduino 傳的 millis() 或時間戳
+            let t = (timestamp - startTime) / 1000; // 如果是 millis()，轉秒
 
-        let raw = { 
-            t: t, 
-            hr: parseInt(p[0])||0, 
-            gsr: parseInt(p[1])||0, 
-            resp: parseInt(p[2])||0 
-        };
+            let raw = { 
+                t: t, 
+                hr: parseInt(p[1])||0, 
+                gsr: parseInt(p[2])||0, 
+                resp: parseInt(p[3])||0 
+            };
 
-        // 1. Algo Calculation
-        algo.push('HR', t, raw.hr);
-        algo.push('Resp', t, raw.resp);
+            // 1. Algo Calculation
+            algo.push('HR', t, raw.hr);
+            algo.push('Resp', t, raw.resp);
 
-        let calcHR = algo.getRate('HR');
-        let calcResp = algo.getRate('Resp');
+            let calcHR = algo.getRate('HR');
+            let calcResp = algo.getRate('Resp');
 
-        // 2. UI Update (Raw + Calc)
-        document.getElementById('valHR').innerText = calcHR;
-        document.getElementById('valRawHR').innerText = raw.hr;
-        
-        document.getElementById('valGSR').innerText = raw.gsr; // GSR is just value
-        document.getElementById('valRawGSR').innerText = raw.gsr;
+            // 2. UI Update (Raw + Calc)
+            document.getElementById('valHR').innerText = calcHR;
+            document.getElementById('valRawHR').innerText = raw.hr;
+            
+            document.getElementById('valGSR').innerText = raw.gsr; // GSR is just value
+            document.getElementById('valRawGSR').innerText = raw.gsr;
 
-        document.getElementById('valResp').innerText = calcResp;
-        document.getElementById('valRawResp').innerText = raw.resp;
+            document.getElementById('valResp').innerText = calcResp;
+            document.getElementById('valRawResp').innerText = raw.resp;
 
-        // Instant Tab (Raw Values)
-        updateChart(charts.InstHR, t, raw.hr);
-        updateChart(charts.InstGSR, t, raw.gsr);
-        updateChart(charts.InstResp, t, raw.resp);
+            // Instant Tab (Raw Values)
+            updateChart(charts.InstHR, t, raw.hr);
+            updateChart(charts.InstGSR, t, raw.gsr);
+            updateChart(charts.InstResp, t, raw.resp);
 
-        // Live Tab (Calculated Values - Smoothed or Raw depending on preference, here we plot Raw for vis but show Rate)
-        // User instruction said "Monitor Panel must show Raw and Calc". 
-        // For the CHART, usually we visualize the waveform (Raw) so user can see noise.
-        updateChart(charts.LiveHR, t, raw.hr); 
-        updateChart(charts.LiveGSR, t, raw.gsr);
-        updateChart(charts.LiveResp, t, raw.resp);
+            // Live Tab (Calculated Values - Smoothed or Raw depending on preference, here we plot Raw for vis but show Rate)
+            // User instruction said "Monitor Panel must show Raw and Calc". 
+            // For the CHART, usually we visualize the waveform (Raw) so user can see noise.
+            updateChart(charts.LiveHR, t, raw.hr); 
+            updateChart(charts.LiveGSR, t, raw.gsr);
+            updateChart(charts.LiveResp, t, raw.resp);
 
-        // 3. Storage
-        let dataPoint = { t:t, hr:calcHR, gsr:raw.gsr, resp:calcResp, rawHR:raw.hr, rawResp:raw.resp };
-        
-        if(appState === 'monitoring') {
-            monitorData.push(dataPoint);
-            updateDetailTable(dataPoint);
-        } else if(appState === 'calibrating') {
-            calibrationData.push(dataPoint);
+            // 3. Storage
+            let dataPoint = { t:t, hr:calcHR, gsr:raw.gsr, resp:calcResp, rawHR:raw.hr, rawResp:raw.resp };
+            
+            if(appState === 'monitoring') {
+                monitorData.push(dataPoint);
+                updateDetailTable(dataPoint);
+            } else if(appState === 'calibrating') {
+                calibrationData.push(dataPoint);
+            }
+        } catch (e) {
+            console.error("Process data error:", e);
+            showToast("數據處理失敗: " + e.message);
         }
     }
 
     function updateChart(c, x, y) {
-        c.data.datasets[0].data.push({x,y});
-        if(c.data.datasets[0].data.length > 100) c.data.datasets[0].data.shift();
-        c.update('none');
+        try {
+            if (!c) throw new Error("Chart not initialized");
+            c.data.datasets[0].data.push({x,y});
+            if(c.data.datasets[0].data.length > 100) c.data.datasets[0].data.shift();
+            c.update('none');
+        } catch (e) {
+            console.error("Update chart error:", e);
+        }
     }
 
     function updateDetailTable(dp) {
-        let tbody = document.getElementById('detailDataTable').querySelector('tbody');
-        let row = document.createElement('tr');
-        row.innerHTML = `<td>${dp.t.toFixed(2)}</td><td>${dp.rawHR}</td><td>${dp.gsr}</td><td>${dp.rawResp}</td>`;
-        tbody.appendChild(row);
+        try {
+            let tbody = document.getElementById('detailDataTable').querySelector('tbody');
+            if (!tbody) throw new Error("Detail table not found");
+            let row = document.createElement('tr');
+            row.innerHTML = `<td>${dp.t.toFixed(2)}</td><td>${dp.rawHR}</td><td>${dp.gsr}</td><td>${dp.rawResp}</td>`;
+            tbody.appendChild(row);
+        } catch (e) {
+            console.error("Update detail table error:", e);
+        }
     }
 
     // === Calibration & Baseline ===
     function startCalibration() {
-        appState = 'calibrating';
-        calibrationData = [];
-        algo.reset();
-        showToast("Calibration Started (60s)...");
-        document.getElementById('btnCalib').disabled = true;
-        document.getElementById('calibTimer').classList.remove('hidden');
-        let timeLeft = 60;
-        document.getElementById('calibTimer').innerText = `${timeLeft}s`;
-        calibCountdown = setInterval(() => {
-            timeLeft--;
+        try {
+            appState = 'calibrating';
+            calibrationData = [];
+            algo.reset();
+            showToast("Calibration Started (60s)...");
+            document.getElementById('btnCalib').disabled = true;
+            document.getElementById('calibTimer').classList.remove('hidden');
+            let timeLeft = 60;
             document.getElementById('calibTimer').innerText = `${timeLeft}s`;
-            if (timeLeft <= 0) {
-                clearInterval(calibCountdown);
-                finishCalibration();
-            }
-        }, 1000);
+            calibCountdown = setInterval(() => {
+                timeLeft--;
+                document.getElementById('calibTimer').innerText = `${timeLeft}s`;
+                if (timeLeft <= 0) {
+                    clearInterval(calibCountdown);
+                    finishCalibration();
+                }
+            }, 1000);
+        } catch (e) {
+            console.error("Start calibration error:", e);
+            showToast("校正啟動失敗");
+            appState = 'idle';
+            document.getElementById('btnCalib').disabled = false;
+        }
     }
 
     function finishCalibration() {
-        appState = 'idle';
-        document.getElementById('calibTimer').classList.add('hidden');
-        if(calibrationData.length > 0) {
-            // Formula: Arithmetic Mean
-            baseline.hr = calibrationData.reduce((a,b)=>a+b.hr,0) / calibrationData.length;
-            baseline.gsr = calibrationData.reduce((a,b)=>a+b.gsr,0) / calibrationData.length;
-            baseline.resp = calibrationData.reduce((a,b)=>a+b.resp,0) / calibrationData.length;
-            
-            document.getElementById('dispBaseHR').innerText = baseline.hr.toFixed(1);
-            document.getElementById('dispBaseGSR').innerText = baseline.gsr.toFixed(1);
-            document.getElementById('dispBaseResp').innerText = baseline.resp.toFixed(1);
-            
-            showToast("Calibration Done!");
-            document.getElementById('btnMonitor').classList.remove('hidden');
-            document.getElementById('btnCalib').disabled = false;
-        } else {
-            showToast("Error: No Data");
+        try {
+            appState = 'idle';
+            document.getElementById('calibTimer').classList.add('hidden');
+            if(calibrationData.length > 0) {
+                // Formula: Arithmetic Mean
+                baseline.hr = calibrationData.reduce((a,b)=>a+b.hr,0) / calibrationData.length;
+                baseline.gsr = calibrationData.reduce((a,b)=>a+b.gsr,0) / calibrationData.length;
+                baseline.resp = calibrationData.reduce((a,b)=>a+b.resp,0) / calibrationData.length;
+                
+                if (isNaN(baseline.hr) || isNaN(baseline.gsr) || isNaN(baseline.resp)) throw new Error("Invalid baseline calculation");
+
+                document.getElementById('dispBaseHR').innerText = baseline.hr.toFixed(1);
+                document.getElementById('dispBaseGSR').innerText = baseline.gsr.toFixed(1);
+                document.getElementById('dispBaseResp').innerText = baseline.resp.toFixed(1);
+                
+                showToast("Calibration Done!");
+                document.getElementById('btnMonitor').classList.remove('hidden');
+                document.getElementById('btnCalib').disabled = false;
+            } else {
+                throw new Error("No Data");
+            }
+        } catch (e) {
+            console.error("Finish calibration error:", e);
+            showToast("校正失敗: " + e.message);
             document.getElementById('btnCalib').disabled = false;
         }
     }
 
     function startMonitoring() {
-        appState = 'monitoring';
-        monitorData = [];
-        startTime = Date.now();
-        document.getElementById('detailDataSection').classList.remove('hidden');
-        document.getElementById('detailDataTable').querySelector('tbody').innerHTML = '';
-        document.getElementById('btnExportCSV').disabled = false;
-        showToast("Monitoring Started...");
-        document.getElementById('btnMonitor').classList.add('hidden');
-        document.getElementById('btnStop').classList.remove('hidden');
-        document.getElementById('monitorTimer').classList.remove('hidden');
-        let elapsed = 0;
-        document.getElementById('monitorTimer').innerText = `0s`;
-        monitorTimer = setInterval(() => {
-            elapsed++;
-            document.getElementById('monitorTimer').innerText = `${elapsed}s`;
-        }, 1000);
+        try {
+            appState = 'monitoring';
+            monitorData = [];
+            startTime = Date.now();
+            document.getElementById('detailDataSection').classList.remove('hidden');
+            document.getElementById('detailDataTable').querySelector('tbody').innerHTML = '';
+            document.getElementById('btnExportCSV').disabled = false;
+            showToast("Monitoring Started...");
+            document.getElementById('btnMonitor').classList.add('hidden');
+            document.getElementById('btnStop').classList.remove('hidden');
+            document.getElementById('monitorTimer').classList.remove('hidden');
+            let elapsed = 0;
+            document.getElementById('monitorTimer').innerText = `0s`;
+            monitorTimer = setInterval(() => {
+                elapsed++;
+                document.getElementById('monitorTimer').innerText = `${elapsed}s`;
+            }, 1000);
+        } catch (e) {
+            console.error("Start monitoring error:", e);
+            showToast("監測啟動失敗");
+            appState = 'idle';
+        }
     }
 
     function stopAndReport() {
-        appState = 'idle';
-        clearInterval(monitorTimer);
-        document.getElementById('monitorTimer').classList.add('hidden');
-        document.getElementById('btnStop').classList.add('hidden');
-        document.getElementById('btnMonitor').classList.remove('hidden');
-        if(monitorData.length > 0) {
-            generateReport(monitorData, 'Rep', 'stat', 'log');
-            runAllInOne(monitorData); // Also generate All-in-One
-            switchTab('analysis');
-        } else {
-            showToast("No Data Recorded");
+        try {
+            appState = 'idle';
+            if (monitorTimer) clearInterval(monitorTimer);
+            document.getElementById('monitorTimer').classList.add('hidden');
+            document.getElementById('btnStop').classList.add('hidden');
+            document.getElementById('btnMonitor').classList.remove('hidden');
+            if(monitorData.length > 0) {
+                generateReport(monitorData, 'Rep', 'stat', 'log');
+                runAllInOne(monitorData); // Also generate All-in-One
+                switchTab('analysis');
+            } else {
+                throw new Error("No Data Recorded");
+            }
+        } catch (e) {
+            console.error("Stop and report error:", e);
+            showToast("停止並分析失敗: " + e.message);
         }
     }
 
     // === Report & Analysis Generation ===
     function generateReport(data, cPre, sPre, lPre) {
-        // Normalize time to start at 0
-        let t0 = data[0].t;
-        let plotData = data.map(d => ({...d, t: d.t - t0}));
+        try {
+            if (data.length === 0) throw new Error("No data for report");
 
-        ['HR','GSR','Resp'].forEach(k => {
-            let key = k.toLowerCase();
-            let unit = k === 'HR' ? ' (BPM)' : k === 'GSR' ? ' (Ohm)' : ' (RPM)';
-            let base = baseline[key] || 1;
-            
-            // Stats
-            let vals = plotData.map(d => d[key]);
-            let avg = vals.reduce((a,b)=>a+b,0)/vals.length;
-            let max = Math.max(...vals);
-            let min = Math.min(...vals);
-            let diff = ((avg - base) / base) * 100;
+            // Normalize time to start at 0
+            let t0 = data[0].t;
+            let plotData = data.map(d => ({...d, t: d.t - t0}));
 
-            // Threshold Logic
-            // HR > Base*1.2 | Resp > Base*1.25 | GSR < Base*0.9 (Inverted)
-            let mult = (k==='HR') ? settings.hrMult : (k==='Resp') ? settings.respMult : settings.gsrMult;
-            let thVal = base * mult;
-            
-            // Render Stats Table with Units and Raw/Calculated
-            document.getElementById(`${sPre}${k}`).innerHTML = `
-                <div class="stat-cell"><span class="stat-label">Base${unit}</span><span class="stat-val">${base.toFixed(1)}</span></div>
-                <div class="stat-cell"><span class="stat-label">Avg${unit}</span><span class="stat-val">${avg.toFixed(1)}</span></div>
-                <div class="stat-cell"><span class="stat-label">Diff</span><span class="stat-val" style="color:${diff>0?'#ef4444':'#10b981'}">${diff>0?'+':''}${diff.toFixed(1)}%</span></div>
-                <div class="stat-cell"><span class="stat-label">Max${unit}</span><span class="stat-val">${max.toFixed(0)}</span></div>
-                <div class="stat-cell"><span class="stat-label">Min${unit}</span><span class="stat-val">${min.toFixed(0)}</span></div>
-                <div class="stat-cell"><span class="stat-label">Thresh${unit}</span><span class="stat-val">${thVal.toFixed(1)}</span></div>
-            `;
-
-            // Draw Chart (Data, Threshold, Base)
-            let ctx = charts[`${cPre}${k}`];
-            let pts = plotData.map(d => ({x:d.t, y:d[key]}));
-            
-            ctx.data.datasets = [
-                { label:'Value', data:pts, borderColor:getColor(k), borderWidth:2, order:1 },
-                { label:'Threshold', data:pts.map(p=>({x:p.x, y:thVal})), borderColor:'#ef4444', borderDash:[5,5], borderWidth:1, order:2 },
-                { label:'Base', data:pts.map(p=>({x:p.x, y:base})), borderColor:'#333', borderDash:[2,2], borderWidth:1, order:3 }
-            ];
-            
-            // Adjust Scale to show lines clearly
-            let allY = [...vals, thVal, base];
-            ctx.options.scales.y = { min: Math.min(...allY)*0.9, max: Math.max(...allY)*1.1 };
-            ctx.update();
-            ctx.resize();
-
-            // Event Logs (Red text for anomalies)
-            let logHTML = "";
-            let inEvent = false;
-            let startT = 0;
-
-            pts.forEach(p => {
-                let isAnomaly = (k==='GSR') ? (p.y < thVal) : (p.y > thVal); // GSR is Low = Stress
+            ['HR','GSR','Resp'].forEach(k => {
+                let key = k.toLowerCase();
+                let unit = k === 'HR' ? ' (BPM)' : k === 'GSR' ? ' (Ohm)' : ' (RPM)';
+                let base = baseline[key] || 1;
                 
-                if(isAnomaly && !inEvent) { inEvent = true; startT = p.x; }
-                else if(!isAnomaly && inEvent) {
-                    inEvent = false;
-                    logHTML += `<div class="event-item"><span>${startT.toFixed(1)}s - ${p.x.toFixed(1)}s</span><span>異常波動 (Anomaly)</span></div>`;
-                }
-            });
-            if(inEvent) logHTML += `<div class="event-item"><span>${startT.toFixed(1)}s - End</span><span>異常波動 (Anomaly)</span></div>`;
-            
-            document.getElementById(`${lPre}${k}`).innerHTML = logHTML || '<div class="log-empty">No Anomalies Detected</div>';
-        });
+                // Stats
+                let vals = plotData.map(d => d[key]);
+                let avg = vals.reduce((a,b)=>a+b,0)/vals.length;
+                let max = Math.max(...vals);
+                let min = Math.min(...vals);
+                let diff = ((avg - base) / base) * 100;
 
-        let now = moment().format('YYYY-MM-DD HH:mm');
-        document.getElementById('reportDate').innerText = now;
-        document.getElementById('reportArea').style.display = 'block';
+                if (isNaN(avg) || isNaN(max) || isNaN(min)) throw new Error(`Invalid stats for ${k}`);
+
+                // Threshold Logic
+                // HR > Base*1.2 | Resp > Base*1.25 | GSR < Base*0.9 (Inverted)
+                let mult = (k==='HR') ? settings.hrMult : (k==='Resp') ? settings.respMult : settings.gsrMult;
+                let thVal = base * mult;
+                
+                // Render Stats Table with Units and Raw/Calculated
+                let statElement = document.getElementById(`${sPre}${k}`);
+                if (!statElement) throw new Error(`Stat element ${sPre}${k} not found`);
+                statElement.innerHTML = `
+                    <div class="stat-cell"><span class="stat-label">Base${unit}</span><span class="stat-val">${base.toFixed(1)}</span></div>
+                    <div class="stat-cell"><span class="stat-label">Avg${unit}</span><span class="stat-val">${avg.toFixed(1)}</span></div>
+                    <div class="stat-cell"><span class="stat-label">Diff</span><span class="stat-val" style="color:${diff>0?'#ef4444':'#10b981'}">${diff>0?'+':''}${diff.toFixed(1)}%</span></div>
+                    <div class="stat-cell"><span class="stat-label">Max${unit}</span><span class="stat-val">${max.toFixed(0)}</span></div>
+                    <div class="stat-cell"><span class="stat-label">Min${unit}</span><span class="stat-val">${min.toFixed(0)}</span></div>
+                    <div class="stat-cell"><span class="stat-label">Thresh${unit}</span><span class="stat-val">${thVal.toFixed(1)}</span></div>
+                `;
+
+                // Draw Chart (Data, Threshold, Base)
+                let ctx = charts[`${cPre}${k}`];
+                if (!ctx) throw new Error(`Chart ${cPre}${k} not found`);
+                let pts = plotData.map(d => ({x:d.t, y:d[key]}));
+                
+                ctx.data.datasets = [
+                    { label:'Value', data:pts, borderColor:getColor(k), borderWidth:2, order:1 },
+                    { label:'Threshold', data:pts.map(p=>({x:p.x, y:thVal})), borderColor:'#ef4444', borderDash:[5,5], borderWidth:1, order:2 },
+                    { label:'Base', data:pts.map(p=>({x:p.x, y:base})), borderColor:'#333', borderDash:[2,2], borderWidth:1, order:3 }
+                ];
+                
+                // Adjust Scale to show lines clearly
+                let allY = [...vals, thVal, base];
+                ctx.options.scales.y = { min: Math.min(...allY)*0.9, max: Math.max(...allY)*1.1 };
+                ctx.update();
+                ctx.resize();
+
+                // Event Logs (Red text for anomalies)
+                let logHTML = "";
+                let inEvent = false;
+                let startT = 0;
+
+                pts.forEach(p => {
+                    let isAnomaly = (k==='GSR') ? (p.y < thVal) : (p.y > thVal); // GSR is Low = Stress
+                    
+                    if(isAnomaly && !inEvent) { inEvent = true; startT = p.x; }
+                    else if(!isAnomaly && inEvent) {
+                        inEvent = false;
+                        logHTML += `<div class="event-item"><span>${startT.toFixed(1)}s - ${p.x.toFixed(1)}s</span><span>異常波動 (Anomaly)</span></div>`;
+                    }
+                });
+                if(inEvent) logHTML += `<div class="event-item"><span>${startT.toFixed(1)}s - End</span><span>異常波動 (Anomaly)</span></div>`;
+                
+                let logElement = document.getElementById(`${lPre}${k}`);
+                if (!logElement) throw new Error(`Log element ${lPre}${k} not found`);
+                logElement.innerHTML = logHTML || '<div class="log-empty">No Anomalies Detected</div>';
+            });
+
+            let now = moment().format('YYYY-MM-DD HH:mm');
+            document.getElementById('reportDate').innerText = now;
+            document.getElementById('reportArea').style.display = 'block';
+        } catch (e) {
+            console.error("Generate report error:", e);
+            showToast("報告生成失敗: " + e.message);
+        }
     }
 
     // === All-in-One Logic ===
     function runAllInOne(data) {
-        // Reuse Report Generation for the bottom part
-        generateReport(data, 'AioRep', 'aioStat', 'aioLog');
-        document.getElementById('mergedDetailContent').style.display = 'block';
+        try {
+            if (data.length === 0) throw new Error("No data for all-in-one");
 
-        // Calculate Scores
-        let totalScore = 0;
-        let accumHR = 0, accumGSR = 0, accumResp = 0;
-        
-        data.forEach(d => {
-            // Formula: Score = max(0, (Val-Base)/Base) * WeightMultiplier
-            // GSR is inverted: (Base-Val)/Base
-            let sHR = Math.max(0, (d.hr - baseline.hr)/baseline.hr) * 300;
-            let sGSR = Math.max(0, (baseline.gsr - d.gsr)/baseline.gsr) * 300; 
-            let sResp = Math.max(0, (d.resp - baseline.resp)/baseline.resp) * 100;
+            // Reuse Report Generation for the bottom part
+            generateReport(data, 'AioRep', 'aioStat', 'aioLog');
+            document.getElementById('mergedDetailContent').style.display = 'block';
 
-            // Cap individual contributions if needed, or cap total later
-            // Weighted Sum: HR 0.6, GSR 0.3, Resp 0.1
-            let pointScore = (sHR * settings.hrWeight) + (sGSR * settings.gsrWeight) + (sResp * settings.respWeight);
-            totalScore += Math.min(100, pointScore);
+            // Calculate Scores
+            let totalScore = 0;
+            let accumHR = 0, accumGSR = 0, accumResp = 0;
+            
+            data.forEach(d => {
+                // Formula: Score = max(0, (Val-Base)/Base) * WeightMultiplier
+                // GSR is inverted: (Base-Val)/Base
+                let sHR = Math.max(0, (d.hr - baseline.hr)/baseline.hr) * 300;
+                let sGSR = Math.max(0, (baseline.gsr - d.gsr)/baseline.gsr) * 300; 
+                let sResp = Math.max(0, (d.resp - baseline.resp)/baseline.resp) * 100;
 
-            accumHR += sHR; accumGSR += sGSR; accumResp += sResp;
-        });
+                // Cap individual contributions if needed, or cap total later
+                // Weighted Sum: HR 0.6, GSR 0.3, Resp 0.1
+                let pointScore = (sHR * settings.hrWeight) + (sGSR * settings.gsrWeight) + (sResp * settings.respWeight);
+                totalScore += Math.min(100, pointScore);
 
-        let finalScore = totalScore / data.length;
-        if(isNaN(finalScore)) finalScore = 0;
+                accumHR += sHR; accumGSR += sGSR; accumResp += sResp;
+            });
 
-        // Update Gauge
-        charts.Gauge.data.datasets[0].data = [finalScore, 100-finalScore];
-        charts.Gauge.data.datasets[0].backgroundColor = [
-            finalScore > 60 ? '#ef4444' : finalScore > 30 ? '#f59e0b' : '#10b981', 
-            '#e2e8f0'
-        ];
-        charts.Gauge.update();
+            let finalScore = totalScore / data.length;
+            if(isNaN(finalScore)) finalScore = 0;
 
-        document.getElementById('aioScore').innerText = finalScore.toFixed(0);
-        document.getElementById('aioStatus').innerText = finalScore>60?"HIGH STRESS":finalScore>30?"MILD STRESS":"RELAXED";
+            // Update Gauge
+            if (!charts.Gauge) throw new Error("Gauge chart not initialized");
+            charts.Gauge.data.datasets[0].data = [finalScore, 100-finalScore];
+            charts.Gauge.data.datasets[0].backgroundColor = [
+                finalScore > 60 ? '#ef4444' : finalScore > 30 ? '#f59e0b' : '#10b981', 
+                '#e2e8f0'
+            ];
+            charts.Gauge.update();
 
-        // Update Contribution Bar
-        let sum = accumHR + accumGSR + accumResp || 1;
-        charts.Contrib.data.datasets[0].data = [
-            (accumHR/sum)*100, (accumGSR/sum)*100, (accumResp/sum)*100
-        ];
-        charts.Contrib.update();
+            document.getElementById('aioScore').innerText = finalScore.toFixed(0);
+            document.getElementById('aioStatus').innerText = finalScore>60?"HIGH STRESS":finalScore>30?"MILD STRESS":"RELAXED";
 
-        let now = moment().format('YYYY-MM-DD HH:mm');
-        document.getElementById('aioAnalysisDate').innerText = now;
-        document.getElementById('aioProduceDate').innerText = now; // 假設產生日期同分析日期
+            // Update Contribution Bar
+            let sum = accumHR + accumGSR + accumResp || 1;
+            if (!charts.Contrib) throw new Error("Contrib chart not initialized");
+            charts.Contrib.data.datasets[0].data = [
+                (accumHR/sum)*100, (accumGSR/sum)*100, (accumResp/sum)*100
+            ];
+            charts.Contrib.update();
+
+            let now = moment().format('YYYY-MM-DD HH:mm');
+            document.getElementById('aioAnalysisDate').innerText = now;
+            document.getElementById('aioProduceDate').innerText = now; // 假設產生日期同分析日期
+        } catch (e) {
+            console.error("Run all-in-one error:", e);
+            showToast("All-in-One 分析失敗: " + e.message);
+        }
     }
 
     // === File Handling ===
-    function handleFileUpload(input) { parseCSV(input, 'fileNameOriginal', (d)=>{ generateReport(d,'Rep','stat','log'); }); }
-    function handleAioUpload(input) { parseCSV(input, 'fileNameAio', (d)=>{ runAllInOne(d); }); }
+    function handleFileUpload(input) { 
+        try {
+            parseCSV(input, 'fileNameOriginal', (d)=>{ generateReport(d,'Rep','stat','log'); }); 
+        } catch (e) {
+            console.error("File upload error:", e);
+            showToast("檔案上傳失敗");
+        }
+    }
+    function handleAioUpload(input) { 
+        try {
+            parseCSV(input, 'fileNameAio', (d)=>{ runAllInOne(d); }); 
+        } catch (e) {
+            console.error("AIO file upload error:", e);
+            showToast("AIO 檔案上傳失敗");
+        }
+    }
 
     function parseCSV(input, nameId, cb) {
-        let f = input.files[0];
-        if(!f) return;
-        document.getElementById(nameId).innerText = f.name;
-        Papa.parse(f, {
-            complete: (res) => {
-                // Skip header, map cols
-                let parsed = res.data.slice(1).map((r, i) => ({
-                    t: parseFloat(r[0]||i), hr: parseFloat(r[1]), gsr: parseFloat(r[2]), resp: parseFloat(r[3])
-                })).filter(x => !isNaN(x.hr));
-                
-                // Auto baseline if not set (average of first 10 secs or whole file)
-                if(baseline.hr === 0) {
-                    baseline.hr = parsed.reduce((a,b)=>a+b.hr,0)/parsed.length;
-                    baseline.gsr = parsed.reduce((a,b)=>a+b.gsr,0)/parsed.length;
-                    baseline.resp = parsed.reduce((a,b)=>a+b.resp,0)/parsed.length;
-                    showToast("Auto-Baseline from File");
+        try {
+            let f = input.files[0];
+            if(!f) throw new Error("No file selected");
+            document.getElementById(nameId).innerText = f.name;
+            Papa.parse(f, {
+                complete: (res) => {
+                    try {
+                        // Skip header, map cols
+                        let parsed = res.data.slice(1).map((r, i) => ({
+                            t: parseFloat(r[0]||i), hr: parseFloat(r[1]), gsr: parseFloat(r[2]), resp: parseFloat(r[3])
+                        })).filter(x => !isNaN(x.hr));
+                        
+                        if (parsed.length === 0) throw new Error("Invalid CSV data");
+
+                        // Auto baseline if not set (average of first 10 secs or whole file)
+                        if(baseline.hr === 0) {
+                            baseline.hr = parsed.reduce((a,b)=>a+b.hr,0)/parsed.length;
+                            baseline.gsr = parsed.reduce((a,b)=>a+b.gsr,0)/parsed.length;
+                            baseline.resp = parsed.reduce((a,b)=>a+b.resp,0)/parsed.length;
+                            showToast("Auto-Baseline from File");
+                        }
+                        cb(parsed);
+                    } catch (e) {
+                        console.error("CSV parse complete error:", e);
+                        showToast("CSV 解析失敗: " + e.message);
+                    }
+                },
+                error: (err) => {
+                    console.error("PapaParse error:", err);
+                    showToast("CSV 讀取錯誤: " + err.message);
                 }
-                cb(parsed);
-            }
-        });
+            });
+        } catch (e) {
+            console.error("Parse CSV error:", e);
+            showToast("CSV 處理失敗: " + e.message);
+        }
     }
 
     function downloadCSV() {
-        let csv = "Time,HR,GSR,Resp\n" + monitorData.map(d=>`${d.t.toFixed(2)},${d.hr},${d.gsr},${d.resp}`).join("\n");
-        saveAs(new Blob([csv],{type:"text/csv"}), "BioData.csv");
+        try {
+            if (monitorData.length === 0) throw new Error("No data to export");
+            let csv = "Time,HR,GSR,Resp\n" + monitorData.map(d=>`${d.t.toFixed(2)},${d.hr},${d.gsr},${d.resp}`).join("\n");
+            saveAs(new Blob([csv],{type:"text/csv"}), "BioData.csv");
+        } catch (e) {
+            console.error("Download CSV error:", e);
+            showToast("CSV 匯出失敗: " + e.message);
+        }
     }
 
     // === Export ===
     function exportImage(type, id) {
-        let el = document.getElementById(id);
-        document.querySelectorAll('.print-hide').forEach(e=>e.style.display='none');
-        html2canvas(el).then(c => {
-            let a=document.createElement('a'); a.download=`Report.${type}`; a.href=c.toDataURL(`image/${type}`); a.click();
-            document.querySelectorAll('.print-hide').forEach(e=>e.style.display='block');
-        });
+        try {
+            let el = document.getElementById(id);
+            if (!el) throw new Error("Export element not found");
+            document.querySelectorAll('.print-hide').forEach(e=>e.style.display='none');
+            html2canvas(el).then(c => {
+                let a=document.createElement('a'); a.download=`Report.${type}`; a.href=c.toDataURL(`image/${type}`); a.click();
+                document.querySelectorAll('.print-hide').forEach(e=>e.style.display='block');
+            }).catch(e => { throw e; });
+        } catch (e) {
+            console.error("Export image error:", e);
+            showToast("影像匯出失敗");
+        }
     }
     function exportPDF(id) {
-        let el = document.getElementById(id);
-        document.querySelectorAll('.print-hide').forEach(e=>e.style.display='none');
-        html2canvas(el, {scale: 0.5}).then(c => { // Compressed by lower scale
-            const pdf = new jspdf.jsPDF('p','mm','a4');
-            const imgProps = pdf.getImageProperties(c.toDataURL('image/png'));
-            const pdfWidth = pdf.internal.pageSize.getWidth();
-            const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-            pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, pdfWidth, pdfHeight);
-            pdf.save('BioReport.pdf');
-            document.querySelectorAll('.print-hide').forEach(e=>e.style.display='block');
-        });
+        try {
+            let el = document.getElementById(id);
+            if (!el) throw new Error("Export element not found");
+            document.querySelectorAll('.print-hide').forEach(e=>e.style.display='none');
+            html2canvas(el, {scale: 0.5}).then(c => { // Compressed by lower scale
+                const pdf = new jspdf.jsPDF('p','mm','a4');
+                const imgProps = pdf.getImageProperties(c.toDataURL('image/png'));
+                const pdfWidth = pdf.internal.pageSize.getWidth();
+                const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+                pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, pdfWidth, pdfHeight);
+                pdf.save('BioReport.pdf');
+                document.querySelectorAll('.print-hide').forEach(e=>e.style.display='block');
+            }).catch(e => { throw e; });
+        } catch (e) {
+            console.error("Export PDF error:", e);
+            showToast("PDF 匯出失敗");
+        }
     }
 
     async function exportZIP(id) {
-        let zip = new JSZip();
-        // Add CSV
-        let csv = "Time,HR,GSR,Resp\n" + monitorData.map(d=>`${d.t.toFixed(2)},${d.hr},${d.gsr},${d.resp}`).join("\n");
-        zip.file("BioData.csv", csv);
+        try {
+            let zip = new JSZip();
+            // Add CSV
+            let csv = "Time,HR,GSR,Resp\n" + monitorData.map(d=>`${d.t.toFixed(2)},${d.hr},${d.gsr},${d.resp}`).join("\n");
+            zip.file("BioData.csv", csv);
 
-        // Add PNG
-        let pngCanvas = await html2canvas(document.getElementById(id));
-        zip.file("Report.png", pngCanvas.toDataURL('image/png').split(',')[1], {base64: true});
+            // Add PNG
+            let pngCanvas = await html2canvas(document.getElementById(id));
+            zip.file("Report.png", pngCanvas.toDataURL('image/png').split(',')[1], {base64: true});
 
-        // Add JPG
-        let jpgCanvas = await html2canvas(document.getElementById(id));
-        zip.file("Report.jpg", jpgCanvas.toDataURL('image/jpeg').split(',')[1], {base64: true});
+            // Add JPG
+            let jpgCanvas = await html2canvas(document.getElementById(id));
+            zip.file("Report.jpg", jpgCanvas.toDataURL('image/jpeg').split(',')[1], {base64: true});
 
-        // Add PDF
-        let pdfCanvas = await html2canvas(document.getElementById(id), {scale: 0.5});
-        const pdf = new jspdf.jsPDF('p','mm','a4');
-        const imgProps = pdf.getImageProperties(pdfCanvas.toDataURL('image/png'));
-        const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-        pdf.addImage(pdfCanvas.toDataURL('image/png'), 'PNG', 0, 0, pdfWidth, pdfHeight);
-        zip.file("Report.pdf", pdf.output('blob'));
+            // Add PDF
+            let pdfCanvas = await html2canvas(document.getElementById(id), {scale: 0.5});
+            const pdf = new jspdf.jsPDF('p','mm','a4');
+            const imgProps = pdf.getImageProperties(pdfCanvas.toDataURL('image/png'));
+            const pdfWidth = pdf.internal.pageSize.getWidth();
+            const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+            pdf.addImage(pdfCanvas.toDataURL('image/png'), 'PNG', 0, 0, pdfWidth, pdfHeight);
+            zip.file("Report.pdf", pdf.output('blob'));
 
-        // Generate ZIP
-        let content = await zip.generateAsync({type: "blob"});
-        saveAs(content, "BioReport.zip");
+            // Generate ZIP
+            let content = await zip.generateAsync({type: "blob"});
+            saveAs(content, "BioReport.zip");
+        } catch (e) {
+            console.error("Export ZIP error:", e);
+            showToast("ZIP 匯出失敗");
+        }
     }
 
     // === BLE Connection ===
